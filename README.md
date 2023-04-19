@@ -45,6 +45,12 @@ const content = renderToString(<Home />); // 得到Home组件对应的字符串
 
 
 
+## 同构
+
+见本文目录：客户端搭建/总结
+
+
+
 # webpack配置文件
 
 
@@ -75,3 +81,87 @@ const content = renderToString(<Home />); // 得到Home组件对应的字符串
 
 热更新流程梳理：文件变动被`webpack`监听到，执行重新打包，从而`build`文件夹下打包产物发生改变，被`nodemon`监听到然后再次启动`node`服务。
 
+
+
+# 客户端搭建
+
+## 需求分析&思路确定
+
+我们的项目说白了是一个`node`服务，通过`renderToString`方法将`React`代码转换为了对应的`html`字符串，然后通过模版字符串的形式嵌入到响应的`<html />`中，但是如果我们修改`react`代码，如`src/containers/Home/index.js`中给`<button>`添加事件回调，如下：
+
+~~~react
+import React from "react";
+
+const Home = () => {
+  return (
+    <div>
+      home
+      <button onClick={() => alert("click")}>click</button>
+    </div>
+  );
+};
+
+export default Home;
+~~~
+
+这时候请求`node`服务发现事件是不生效的，原因就是`renderToString`方法只返回`React`代码对应的`html`结构，而对事件绑定等逻辑不做处理，这也非常好理解，`renderToString`方法运行在服务端`node`环境下，根本就没有dom这个概念，有怎么可能处理事件绑定呢。所以`renderToString`方法内部肯定在根据虚拟dom转字符串时把事件绑定等一些虚拟dom的属性忽略掉了，最终只生成了`html`结构。
+
+我们现在的目标是让事件绑定相关的逻辑生效，中心思路很简单，利用`React`提供的相关方法，将我们的`react`业务代码进行处理，生成相应的处理事件绑定等逻辑的`js`文件，然后让客户端执行这个`js`文件，完成事件绑定。
+
+
+
+## 搭建实践
+
+首先给响应体中加一个`<script>`标签来指定包含了处理事件绑定的`js`文件。
+
+~~~js
+app.get("/", (req, res) => {
+  res.send(
+    `<html>
+        <head>
+            <title>hello</title>
+        </head>
+        <body>
+            <div id="root">${content}</div>
+            <script src="./index.js"></script>
+        </body>
+    </html>`
+  );
+});
+~~~
+
+我们通过`app.use(express.static("public"));`指定一个静态资源托管目录，当下需要做的事情就非常明确了——构造`js`文件，并存放在`public`文件夹下。
+
+思路是创建一个`src/client`文件夹，其下`index.js`即为利用`React`提供的api生成js逻辑的地方，然后通过`webpack`对其进行处理，最终把打包后的产物命名为`index.js`并放在`public`文件夹下。
+
+`src/client/index.js`
+
+~~~js
+import React from "react";
+import { hydrateRoot } from "react-dom/client";
+
+import Home from "../containers/Home";
+
+hydrateRoot(document.getElementById("root"), <Home />); // 使用hydrateRoot方法生成客户端需要执行的js代码
+~~~
+
+然后再配置个`webpack.client.js`文件用于打包`src/client/`文件夹下的代码，最后再配置一下`package.json`里的`script`脚本，增加对`client`文件夹下内容的实时监听打包即可：
+
+~~~json
+"scripts": {
+  "dev": "npm-run-all --parallel dev:**",
+  "dev:build:server": "webpack --config webpack.server.js --watch",
+  "dev:build:client": "webpack --config webpack.client.js --watch",
+  "dev:start": "nodemon --watch build --exec node ./build/bundle.js"
+}
+~~~
+
+
+
+## 总结
+
+所谓服务端代码，即`src/index.js`，里面如`const content = renderToString(<Home />);`这属于服务端执行的`react`的逻辑，效果就是生成`react`代码对应的`html`静态结构。
+
+所谓客户端（`src/client/`），其实就是让客户端（浏览器）去执行的`react`逻辑，即打包`src/client/index.js`生成的那个`js`文件，这个文件的执行，将会赋予`renderToString`方法生成的静态的`html`结构事件交互能力。
+
+这里引出**同构**的概念，大致意思就是同一套`react`代码，当下这里就是指`Home`组件，服务端运行一次，即`renderToString`，客户端运行一次，即运行`<script src="index.js></script>"`，也就是服务端`src/client/index.js`打包生成的代码，核心逻辑就是`hydrateRoot`方法的调用。

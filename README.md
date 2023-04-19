@@ -55,5 +55,23 @@ const content = renderToString(<Home />); // 得到Home组件对应的字符串
 
 
 
+# 开发体验优化
 
+配置`package.json`实现热更新
+
+~~~json
+"scripts": {
+  "dev": "npm-run-all --parallel dev:**",
+  "dev:build": "webpack --config webpack.server.js --watch",
+  "dev:start": "nodemon --watch build --exec node ./build/bundle.js"
+},
+~~~
+
+首先`"dev:build"`命令即开启`webpack`的监听，打包范围内的文件有变动即重新打包；
+
+`"dev:start"`命令即`nodemon`工具，`--watch`参数指定监听`build`文件夹下的文件变动，`--exec`指定后续执行的命令，即启动`node`服务
+
+`dev`命令借助`npm-run-all`工具并行运行所有以`dev:`开头的命令，实现热更新。
+
+热更新流程梳理：文件变动被`webpack`监听到，执行重新打包，从而`build`文件夹下打包产物发生改变，被`nodemon`监听到然后再次启动`node`服务。
 

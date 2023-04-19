@@ -39,6 +39,10 @@ const content = renderToString(<Home />); // 得到Home组件对应的字符串
 
 
 
+## CSR & SSR 利弊对比
+
+基于ssr的角度来说，优点是显而易见的，首屏速度快和更好的seo支持。但是因为ssr时，React代码在服务器上执行，消耗的是服务器端的性能，所以最直接的缺点就是服务器负载大
+
 
 
 # webpack配置文件

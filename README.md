@@ -240,3 +240,51 @@ app.listen(3000, () => {
 });
 ~~~
 
+
+
+# 抽取服务端字符串拼接的逻辑为`render`函数
+
+`@/server/utils.js`：
+
+~~~jsx
+import React from "react"; // 提供jsx语法支持
+import { renderToString } from "react-dom/server";
+import { StaticRouter } from "react-router-dom/server";
+import Routes from "../Routes";
+
+export const render = (req) => {
+  const content = renderToString(
+    <StaticRouter location={req.path}>{Routes()}</StaticRouter>
+  );
+  return `
+        <html>
+            <head>
+                <title>hello</title>
+            </head>
+            <body>
+                <div id="root">${content}</div>
+                <script src="./index.js"></script>
+            </body>
+        </html>
+    `;
+};
+~~~
+
+`@/server/index.js`：
+
+~~~js
+import express from "express";
+import { render } from "./utils";
+
+const app = express();
+app.use(express.static("public"));
+
+app.get("*", (req, res) => {
+  res.send(render(req)); // 返回render函数的返回值即可
+});
+
+app.listen(3000, () => {
+  console.log("server run successfully");
+});
+~~~
+

@@ -288,3 +288,64 @@ app.listen(3000, () => {
 });
 ~~~
 
+
+
+# ssr只支持首次渲染的路由
+
+创建公共组件`<Header />`进行路由导航，`@/conponents/Header.js`：
+
+~~~jsx
+import React from "react";
+import { Link } from "react-router-dom";
+
+const Header = () => {
+  return (
+    <div>
+      <Link to="/">Home</Link>
+      <br />
+      <Link to="/about">About</Link>
+    </div>
+  );
+};
+
+export default Header;
+~~~
+
+并在两个路由组件`<About />`和`<Home />`中使用：
+
+~~~jsx
+// About.js
+import React from "react";
+import Header from "../../components/Header";
+
+const About = () => {
+  return (
+    <div>
+      <Header />
+      This is About page
+    </div>
+  );
+};
+
+export default About;
+
+// Home.js
+import React from "react";
+import Header from "../../components/Header";
+
+const Home = () => {
+  return (
+    <div>
+      <Header />
+      home
+      <button onClick={() => alert("click1")}>click</button>
+    </div>
+  );
+};
+
+export default Home;
+~~~
+
+
+
+打开浏览器，在`<Home />`或者`<About />`组件中我们都可以借助`<Link />`（编译为`<a />`）正常进行路由转跳，但是查看源代码发现，其实源代码一直都不变，都是我们在浏览器中首次请求的路由路径对应的组件的源代码，比如我请求`127.0.0.1:3000/about`，源码就是`<About />`组件所对应的，而请求`127.0.0.1:3000/`对应的源码就是`<Home />`组件的源码，然后应用程序内点击`<Link />`进行路由切换源码不变，**总结来说就是服务端渲染只发生在向服务端发送请求的时刻，后续web程序中的路由转跳将由js接管。**

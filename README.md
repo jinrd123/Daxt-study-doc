@@ -216,7 +216,8 @@ import Routes from "../Routes";
 const app = express();
 app.use(express.static("public"));
 
-app.get("/", (req, res) => {
+// 这里服务端接口路由修改为"*"以接收所有前端路由请求
+app.get("*", (req, res) => {
   const content = renderToString(
     <StaticRouter location={req.path}>{Routes()}</StaticRouter>
   );

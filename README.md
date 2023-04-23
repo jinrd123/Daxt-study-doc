@@ -165,3 +165,77 @@ hydrateRoot(document.getElementById("root"), <Home />); // 使用hydrateRoot方�
 所谓客户端（`src/client/`），其实就是让客户端（浏览器）去执行的`react`逻辑，即打包`src/client/index.js`生成的那个`js`文件，这个文件的执行，将会赋予`renderToString`方法生成的静态的`html`结构事件交互能力。
 
 这里引出**同构**的概念，大致意思就是同一套`react`代码，当下这里就是指`Home`组件，服务端运行一次，即`renderToString`，客户端运行一次，即运行`<script src="index.js></script>"`，也就是服务端`src/client/index.js`打包生成的代码，核心逻辑就是`hydrateRoot`方法的调用。
+
+
+
+# 引入路由同构
+
+编写路由配置文件`Routes.js`，这就是我们常在`<App />`中写的路由配置部分：
+
+~~~js
+import React from "react";
+import { Route, Routes as RouterRoutes } from "react-router-dom";
+import Home from "./containers/Home";
+
+const Routes = () => {
+  return (
+    <RouterRoutes>
+      <Route path="/" element={<Home />} />
+    </RouterRoutes>
+  );
+};
+
+export default Routes;
+~~~
+
+客户端代码`@/client/index.js`，说白了就是曾经单页面应用中路由配置直接写`<Routes />`，现在用`<BrowserRouter />`组件包裹`<Routes />`：
+
+~~~js
+import React from "react";
+import { hydrateRoot } from "react-dom/client";
+import { BrowserRouter } from "react-router-dom";
+import Routes from "../Routes";
+
+const App = () => {
+  return <BrowserRouter>{Routes()}</BrowserRouter>;
+};
+
+// 注意这里：hyrateRoot表示客户端代码的结构为在<div id="root"></div>中内层紧接着是由<BrowserRouter/>包裹的路由配置，所以下面服务端代码也要注意结构的统一
+hydrateRoot(document.getElementById("root"), <App />);
+~~~
+
+服务端代码`@/server/index.js`：
+
+~~~js
+import express from "express";
+import React from "react"; // 提供jsx语法支持
+import { renderToString } from "react-dom/server";
+import { StaticRouter } from "react-router-dom/server";
+import Routes from "../Routes";
+
+const app = express();
+app.use(express.static("public"));
+
+app.get("/", (req, res) => {
+  const content = renderToString(
+    <StaticRouter location={req.path}>{Routes()}</StaticRouter>
+  );
+	// 下面的<div id="root">中包裹的内容应该与客户端代码统一，也就是说里面紧接着就是路由配置，但是服务端的包裹<Routes />组件的是"react-router-dom/server"下面的<StaticRouter />组件，并需要将req.path提供给location属性
+  res.send(
+    `<html>
+        <head>
+            <title>hello</title>
+        </head>
+        <body>
+            <div id="root">${content}</div>
+            <script src="./index.js"></script>
+        </body>
+    </html>`
+  );
+});
+
+app.listen(3000, () => {
+  console.log("server run successfully");
+});
+~~~
+

@@ -542,3 +542,29 @@ export const render = (req) => {
 + export default store;
 ~~~
 
+
+
+## store单例模式坑点
+
+当前node服务使用的都是`@/store/index.js`中创建的唯一的一个`store`对象，所以会导致所有用户共享同一个`store`，所以要对`@/store/index.js`做出如下修改：
+
+~~~js
+import { createStore, applyMiddleware } from "redux";
+import thunk from "redux-thunk";
+
+const reducer = (state = { name: "daxt" }, action) => {
+  return state;
+};
+
+- const store = createStore(reducer, applyMiddleware(thunk));
+
++ const getStore = () => {
++  return createStore(reducer, applyMiddleware(thunk));
++ };
+  
+- export default store;
+  
++ export default getStore;
+~~~
+
+同时在客户端以及服务端代码中给`<Provider />`传递`store`实例时调用`getStore`方法，即`<Provider store={getStore()}>`

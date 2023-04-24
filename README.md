@@ -359,3 +359,96 @@ export default Home;
 浏览器、node服务、C++/java服务三者各司其职，浏览器负责页面渲染与js的执行，资源从node服务里获取；node服务负责从java服务里获取数据然后与自己的react组件进行结合生成页面内容以及js；而C++/java服务器专注于底层的数据获取与计算（数据库操作），出于其高性能的考虑。
 
 其中node服务作为整个架构的中间层，针对这种架构，可以单独增加node服务的数量来解决node服务的负载瓶颈，同时架构也有缺点，做单页面应用时我们只需要关注js代码的逻辑正确行（负责纯前端内容），但现在我们前端工程师需要考虑node服务的稳定性，比如node服务死机该如何处理等，相当于把前端工程师业务领域拓展到了运维（后端）等领域。
+
+
+
+# 引入Redux
+
+总体思路：只需要在`@/client/index.js`与`@/server/index.js`使用`redux`并且保证同构的逻辑相同即可，说白了就是给客户端的`<BrowserRouter />`和服务端的`<StaticRouter />`用`<Provider />`包裹即可，然后组件内使用`redux`提供的数据即可。分析一下为啥需要在`@/client/index.js`和`@/server/utils.js`中写基本相同的逻辑代码，而组件中使用`redux`数据就不存在代码逻辑的重复：
+
+原因很简单，我们的核心原则就一个：`server`中通过`renderToString`方法构造并响应的`html`字符串内容所依赖的react项目结构与`client`中`hydrateRoot`生成js所依赖的react项目结构要相同，因为`server`中路由组件使用的是`<StaticRouter />`而`client`中路由组件使用的是`<BrowserRouter />`，由于他俩的结构不同，外面要加一个`<Provider />`的话代码是无法复用的，所以只能两个地方都进行修改，然后路由组件是复用的（`server`和`client`都在使用），所以路由组件中使用`redux`的逻辑只需要写一遍即可。
+
+`@/client/index.js`：
+
+~~~jsx
+import { BrowserRouter } from "react-router-dom";
+import Routes from "../Routes";
+import { createStore } from "redux";
+import { Provider } from "react-redux";
+
++ const reducer = (state = { name: "daxt" }, action) => {
++   return state;
++ };
+
++ const store = createStore(reducer);
+
+const App = () => {
+  return (
++   <Provider store={store}>
+      <BrowserRouter>{Routes()}</BrowserRouter>
++   </Provider>
+  );
+};
+
+hydrateRoot(document.getElementById("root"), <App />);
+~~~
+
+`@/server/utils.js`：
+
+~~~jsx
+import React from "react"; // 提供jsx语法支持
+import { renderToString } from "react-dom/server";
+import { StaticRouter } from "react-router-dom/server";
+import Routes from "../Routes";
++ import { createStore } from "redux";
++ import { Provider } from "react-redux";
+
+export const render = (req) => {
++ const reducer = (state = { name: "daxt" }, action) => {
++   return state;
++ };
++ const store = createStore(reducer);
+
+  const content = renderToString(
++   <Provider store={store}>
+      <StaticRouter location={req.path}>{Routes()}</StaticRouter>
++   </Provider>
+  );
+  return `
+        <html>
+            <head>
+                <title>hello</title>
+            </head>
+            <body>
+                <div id="root">${content}</div>
+                <script src="./index.js"></script>
+            </body>
+        </html>
+    `;
+};
+~~~
+
+`@/containers/Home/index.js`：
+
+~~~jsx
+import React from "react";
+import Header from "../../components/Header";
+import { connect } from "react-redux"; // 通过connect生成高阶函数来将store中的state（dispatch）增强到props中使用即可
+
+const Home = (props) => {
+  return (
+    <div>
+      <Header />
+      home: This is a data -- "{props.name}" from redux
+      <button onClick={() => alert("click1")}>click</button>
+    </div>
+  );
+};
+
+const mapStateToProps = (state) => ({
+  name: state.name,
+});
+
+export default connect(mapStateToProps, null)(Home);
+~~~
+

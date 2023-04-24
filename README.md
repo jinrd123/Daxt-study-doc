@@ -364,6 +364,8 @@ export default Home;
 
 # 引入Redux
 
+## 初步引入（跑通代码并使用redux）
+
 总体思路：只需要在`@/client/index.js`与`@/server/index.js`使用`redux`并且保证同构的逻辑相同即可，说白了就是给客户端的`<BrowserRouter />`和服务端的`<StaticRouter />`用`<Provider />`包裹即可，然后组件内使用`redux`提供的数据即可。分析一下为啥需要在`@/client/index.js`和`@/server/utils.js`中写基本相同的逻辑代码，而组件中使用`redux`数据就不存在代码逻辑的重复：
 
 原因很简单，我们的核心原则就一个：`server`中通过`renderToString`方法构造并响应的`html`字符串内容所依赖的react项目结构与`client`中`hydrateRoot`生成js所依赖的react项目结构要相同，因为`server`中路由组件使用的是`<StaticRouter />`而`client`中路由组件使用的是`<BrowserRouter />`，由于他俩的结构不同，外面要加一个`<Provider />`的话代码是无法复用的，所以只能两个地方都进行修改，然后路由组件是复用的（`server`和`client`都在使用），所以路由组件中使用`redux`的逻辑只需要写一遍即可。
@@ -453,3 +455,90 @@ export default connect(mapStateToProps, null)(Home);
 ~~~
 
 plus：由于`server`端与`client`端都存在`createStore`的逻辑，所以如果使用`redux-thunk`这种中间件也就需要分别在两端书写相关逻辑。
+
+
+
+## 抽取公共逻辑（`store`相关）
+
+`@/client/index.js`：
+
+~~~jsx
+import React from "react";
+import { hydrateRoot } from "react-dom/client";
+import { BrowserRouter } from "react-router-dom";
+import Routes from "../Routes";
+- import { createStore, applyMiddleware } from "redux";
+import { Provider } from "react-redux";
+- import thunk from "redux-thunk";
+
+- const reducer = (state = { name: "daxt" }, action) => {
+-  return state;
+- };
+  
++ import store from "../store";
+
+- const store = createStore(reducer, applyMiddleware(thunk));
+
+const App = () => {
+  return (
+    <Provider store={store}>
+      <BrowserRouter>{Routes()}</BrowserRouter>
+    </Provider>
+  );
+};
+
+hydrateRoot(document.getElementById("root"), <App />);
+~~~
+
+服务端代码同理，删除所有创建`store`相关的逻辑，改为从`@/store/index.js`中引入，`@/server/utils.js`：
+
+~~~jsx
+import React from "react"; // 提供jsx语法支持
+import { renderToString } from "react-dom/server";
+import { StaticRouter } from "react-router-dom/server";
+import Routes from "../Routes";
+- import { createStore, applyMiddleware } from "redux";
+import { Provider } from "react-redux";
+- import thunk from "redux-thunk";
+
++ import store from "../store";
+
+export const render = (req) => {
+- const reducer = (state = { name: "daxt" }, action) => {
+-   return state;
+- };
+- const store = createStore(reducer, applyMiddleware(thunk));
+
+  const content = renderToString(
+    <Provider store={store}>
+      <StaticRouter location={req.path}>{Routes()}</StaticRouter>
+    </Provider>
+  );
+  return `
+        <html>
+            <head>
+                <title>hello</title>
+            </head>
+            <body>
+                <div id="root">${content}</div>
+                <script src="./index.js"></script>
+            </body>
+        </html>
+    `;
+};
+~~~
+
+新建`@/store/index.js`：
+
+~~~js
++ import { createStore, applyMiddleware } from "redux";
++ import thunk from "redux-thunk"; 
+
++ const reducer = (state = { name: "daxt" }, action) => {
++  return state;
++ };
++ const store = createStore(reducer, applyMiddleware(thunk));
+
++ export default store;
+~~~
+

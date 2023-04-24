@@ -452,3 +452,4 @@ const mapStateToProps = (state) => ({
 export default connect(mapStateToProps, null)(Home);
 ~~~
 
+plus：由于`server`端与`client`端都存在`createStore`的逻辑，所以如果使用`redux-thunk`这种中间件也就需要分别在两端书写相关逻辑。

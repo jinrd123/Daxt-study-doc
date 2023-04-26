@@ -5,6 +5,7 @@ const app = express();
 app.use(cors());
 
 app.get("/", (req, res) => {
+  console.log("服务被请求");
   res.send("服务器返回的get数据");
 });
 

@@ -568,3 +568,122 @@ const reducer = (state = { name: "daxt" }, action) => {
 ~~~
 
 同时在客户端以及服务端代码中给`<Provider />`传递`store`实例时调用`getStore`方法，即`<Provider store={getStore()}>`
+
+
+
+## redux中异步数据的服务端渲染
+
+修改当前的`@/store/index.js`，创建模块化的`store`实例：
+
+~~~js
+import { createStore, applyMiddleware, combineReducers } from "redux";
+import thunk from "redux-thunk";
+import { reducer as homeReducer } from "../containers/Home/store"; // 引入具体组件的reducer实例
+
+// combineReducers创建模块化store
+const reducer = combineReducers({
+  home: homeReducer,
+});
+
+const getStore = () => {
+  return createStore(reducer, applyMiddleware(thunk));
+};
+
+export default getStore;
+~~~
+
+`@/containers/Home/store`：
+
+~~~jsx
+// index.js
+import reducer from "./reducer";
+
+export { reducer };
+
+// reducer.js
+import { CHANGE_HOME_LIST } from "./constants";
+
+const defaultState = {
+  data: "home data",
+};
+
+export default (state = defaultState, action) => {
+  switch (action.type) {
+    case CHANGE_HOME_LIST:
+      return {
+        ...state,
+        data: action.data,
+      };
+    default:
+      return state;
+  }
+};
+
+// constants.js
+export const CHANGE_HOME_LIST = "change_home_list";
+
+// actions.js
+import { CHANGE_HOME_LIST } from "./constants";
+import axios from "axios";
+
+export const changeHomeData = (data) => ({
+  type: CHANGE_HOME_LIST,
+  data,
+});
+
+export const getHomeData = () => { // 通过ajax异步获取服务端数据data，并调用changeHomeData(data)创建action后dispatch
+  return (dispatch) => {
+    axios.get("http://127.0.0.1:80").then((res) => {
+      const homeData = res.data;
+      dispatch(changeHomeData(homeData));
+    });
+  };
+};
+~~~
+
+`@/containers/Home/index.js`：
+
+~~~jsx
+import React, { useEffect } from "react";
+import Header from "../../components/Header";
+import { connect } from "react-redux";
+import { getHomeData } from "./store/actions";
+
+const Home = (props) => {
+  // 组件挂载之初调用props.getHomeData，相当于触发异步请求的逻辑从服务端获取数据
+  useEffect(() => {
+    const { getHomeData } = props;
+    getHomeData();
+  }, []);
+
+  return (
+    <div>
+      <Header />
+      <br />
+      {/* 将store中的数据增强到props中后进行展示 */}
+      {props.data}
+    </div>
+  );
+};
+
+const mapStateToProps = (state) => ({
+  data: state.home.data,
+});
+
+const mapDispatchToProps = (dispatch) => ({
+  getHomeData() {
+    dispatch(getHomeData());
+  },
+});
+
+export default connect(mapStateToProps, mapDispatchToProps)(Home);
+~~~
+
+上诉代码的运行效果是在客户端请求了node服务后，通过js代码的执行向`127.0.0.1:80`（本地跑的另一个服务端项目，用来充当后端数据服务器）发送网络请求，同样通过js的执行对页面进行渲染，即展示出请求获取的异步数据。
+
+
+
+### 当前需要解决的问题：
+
+1. 异步数据并不是在`node`服务中渲染出来的，也就是说页面源代码中并没有对异步数据进行ssr
+2. `node`服务此时并没有充当中间层的作用，也就是说客户端请求的目的地址仍直接是远程数据服务器。

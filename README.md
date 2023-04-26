@@ -687,3 +687,13 @@ export default connect(mapStateToProps, mapDispatchToProps)(Home);
 
 1. 异步数据并不是在`node`服务中渲染出来的，也就是说页面源代码中并没有对异步数据进行ssr
 2. `node`服务此时并没有充当中间层的作用，也就是说客户端请求的目的地址仍直接是远程数据服务器。
+
+
+
+## 项目架构梳理（插曲）
+
+服务端代码，也就是基于`express`框架的`node`服务，打包后生成`/build/bundle.js`，我们启动项目也相当于用`node`命令运行这个`bundle.js`；客户端代码打包后的产物是`/public/index.js`，也就是生成的去“激活”静态结构的js逻辑。
+
+我们的`node`服务通过`express.static("public")`中间件托管`public`文件夹下的资源，相当于托管了客户端“激活”静态结构要执行的js代码，而用户通过浏览器请求到的`html`资源并不是一个真正的`html`文件，而是后端返回的`html`字符串，到了浏览器渲染出了页面（对浏览器来说接收到`<html />`字符串等价于访问一个`.html`文件）。
+
+联系：浏览器上渲染出的`html`页面里面有`<script>`标签，`src`指向的请求地址为`index.js`，即访问到了服务器上的托管的`public`文件夹下的用于“激活”静态结构的js代码，所以这里存在一个网络请求，即向`node`服务请求`index.js`文件。概括一下就是，我们的项目，说白了就是一个`node`服务端项目，然后向我们的`node`服务发请求会返回`html`字符串（浏览器收到`html`字符串等价于接收到`.html`文件），浏览器对`html`进行渲染并执行，因为里面的存在一个`<script src="index.js">`所以会触发浏览器向服务器的再一次请求，即请求`index.js`文件。

@@ -690,7 +690,7 @@ export default connect(mapStateToProps, mapDispatchToProps)(Home);
 
 
 
-## 项目架构梳理（插曲）
+### 项目架构梳理（插曲）
 
 服务端代码，也就是基于`express`框架的`node`服务，打包后生成`/build/bundle.js`，我们启动项目也相当于用`node`命令运行这个`bundle.js`；客户端代码打包后的产物是`/public/index.js`，也就是生成的去“激活”静态结构的js逻辑。
 
@@ -700,8 +700,16 @@ export default connect(mapStateToProps, mapDispatchToProps)(Home);
 
 
 
-## 修复favicon.ico缺失造成的空请求问题（插曲）
+### 修复favicon.ico缺失造成的空请求问题（插曲）
 
 上面说到，我们的浏览器收到`html`字符串与收到`.html`文件是等价的，都会根据`html`文件去执行渲染以及一些网络请求，浏览器有一个默认行为，就是在收到一个`html`文件时，会向请求的地址，也就是返回`html`文件的地址（当然也可能是一个返回`html`字符串的后端接口）为基本路径，请求`./favicon.ico`资源，作为浏览器页签最左边的小图标。
 
 请求我们的`node`服务地址下的`favicon.ico`资源，因为我们托管静态资源的的`public`文件夹下并没有这个资源，进而也就进入了`app.get("*", () => {})`接口请求的逻辑中，所以服务端会给出没有对应的`favicon.ico`路由的提示，修复方法就是在`public`文件夹下放一个名`favicon.ico`的小图片即可。
+
+
+
+### 异步数据ssr的实现思路
+
+可以注意到`@/containers/Home/store/reducer.js`中初始化仓库数据时`defaultState`给`data`值设置了一个`"home data"`作为初始值，然后打开浏览器的源代码，`"home data"`是成功出现在源码中的，也就是成功进行了ssr。
+
+我们的思路就非常明确了：**在服务端代码部分，给`renderToString`传参之前，把异步数据成功存入`store`中即可，这样`renderToString`就能顺利渲染出`store`中的数据并返回给客户端。**

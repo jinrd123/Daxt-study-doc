@@ -876,3 +876,33 @@ export const matchRoutes = (routesConfig, targetPath) => {
 可以说实现是非常粗糙的，`matchRoutes`方法只能匹配到顶层路由，理论上来讲子路由也需要进行匹配并获取异步数据的，再者还有生成`jsx`路由结构的`getRoutes`方法，一层遍历，也是不能生成子路由（嵌套路由）的。这些都是未来需要进行完善的地方。这里为了先跑通异步数据的获取，重点暂时不放在这里。
 
 经过上面的修改，当客户端请求`node`服务时，可以看到`node`服务成功打印出了`"store派发action来获取组件需要的异步数据"`，也就是`Home.loadData`方法正常执行了。现在我们只需要修改`loadData`的逻辑，让`store`正确获取到异步数据即可了。
+
+
+
+### babel@6升级至最新版本(babel@7)（插曲）
+
+执行`npx babel-upgrade --write`（先安装`babel-upgrade`工具），这个命令会修改`package.json`文件，把文件里所有的老版本的`babel`相关依赖删除更换成对应的新版本的依赖。还额外多了一些`babel-plugin`，我把他们都删去了，留下了`@babel/preset-env`和`@/babel/preset-react`两个预设配置给`babel-loader`代码就能正常运行了。
+
+plus：`npx babel-upgrade --write`只是修改`package.json`，最后还需要重新`pnpm i`一下。
+
+现在的`webpack.base.js`:
+
+~~~js
+module.exports = {
+  module: {
+    rules: [
+      {
+        test: /\.js$/,
+        exclude: /node_modules/,
+        use: {
+          loader: "babel-loader",
+          options: {
+            presets: ["@babel/preset-env", "@babel/preset-react"],
+          },
+        },
+      },
+    ],
+  },
+};
+~~~
+

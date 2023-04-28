@@ -1043,3 +1043,5 @@ No routes matched location "/about/index.js"
 说明了客户端向服务端发送了一个请求，请求的`url`是`/about/index.js`，这就是因为`@/server/utils`的`render`函数中那个`<script src="./index.js">`所发出的请求，因为我们请求的是`127.0.0.1:3000/about/children`，基于此，`./index.js`就代表了`/about/index.js`，因为找不到这个js资源，所以就出错了。如果想让我们的应用程序支持请求`127.0.0.1:3000/about/children`而不报错，也非常简单，只需要把将`<script src="./index.js">`改成`<script src="../index.js">`即可。
 
 这里暂时一个想到的解决方案就是写一个方法，用来甄别客户端浏览器请求的路由层级，如果顶层路由，如`127.0.0.1:3000/`或者`127.0.0.1:3000/about`，对应的`<script>`的`src`为`"./index.js"`；如果是嵌套路由，那么如上描述的，修改`src`为`../index.js`或者`../../index.js`即可。
+
+同时由于我们生成的`<Route>`的嵌套结构中使用了`<Navigate />`组件（`<Route element={<Navigate />}`），服务端会给出一个警告：`<Navigate> must not be used on the initial render in a <StaticRouter>. This is a no-op, but you should modify your code so the <Navigate> is only ever rendered in response to some user interaction or state change.`，关于这个问题，似乎在`react-router`升级至6版本时就有人提出了相关[issue](https://github.com/remix-run/react-router/issues/7267)，当时好像根本不支持`ssr`，现在除了有这个警告之外，客户端功能完全正常，所以我认为没有必要在意。

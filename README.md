@@ -906,3 +906,140 @@ module.exports = {
 };
 ~~~
 
+
+
+### 修改`getRoutes`算法以支持嵌套路由的生成
+
+首先修改配置对象`routesConfig`，给`/about`路由增加配置`children`，增加一个重定向路由配置项与一个`/about/children`路由配置，然后修改`getRoutes`方法，旨在遍历`routesConfig`生成`jsx`结构时可以处理`children`以生成嵌套的`<Route />`结构，`@/Routes.js`：
+
+~~~jsx
+import React from "react";
+import { Navigate, Route, Routes as RouterRoutes } from "react-router-dom";
+import Home from "./containers/Home";
+import About from "./containers/About";
+import AboutChildren from "./containers/About/Children";
+
+export const routesConfig = [
+  {
+    path: "/",
+    element: <Home />,
+    loadData: Home.loadData,
+  },
+  {
+    path: "/about",
+    element: <About />,
++   children: [
++     {
++       path: "/about",
++       element: <Navigate to="/about/children" />,
++     },
++     {
++       path: "/about/children",
++       element: <AboutChildren />,
++     },
++   ],
+  },
+];
+
+- // TODO: 增加嵌套路由子<Route />的生成
+- export const getRoutes = (routesConfig) => {
+-   return (
+-     <RouterRoutes>
+-       {routesConfig.map((route, index) => (
+-         <Route {...route} key={index} />
+-       ))}
+-     </RouterRoutes>
+-   );
+- };
+
++ export const getRoutes = (routesConfig) => {
++   const getRouteStructure = (routesConfig) => {
++     const RouteStructure = routesConfig.map((route, index) => {
++       if (route.children && route.children.length > 0) {
++         return (
++           <Route {...route} key={index}>
++             {getRouteStructure(route.children)}
++           </Route>
++         );
++       } else {
++         return <Route {...route} key={index} />;
++       }
++     });
++     return RouteStructure;
++   };
++
++   return <RouterRoutes>{getRouteStructure(routesConfig)}</RouterRoutes>;
++ };
+
+// TODO: 修改逻辑适配嵌套路由异步数据的获取，将下面的matchedRoute修改为mathedRoutes(当前只获取匹配到的一个顶层路由)
+// 获取路由组件所需的异步数据填充到store中
+// 这里要求组件挂载的loadData函数需要传入store实例
+export const fetchAsyncData = (routesConfig, targetPath, store) => {
+  const matchedRoute = matchRoutes(routesConfig, targetPath);
+  if (matchedRoute && matchedRoute.loadData) {
+    matchedRoute.loadData(store);
+  }
+};
+
+// TODO: 增加嵌套路由的匹配支持 & 完善重定向处理...
+// 获取客户端请求路径对应的所有需要获取异步数据的路由配置项
+export const matchRoutes = (routesConfig, targetPath) => {
+  let ans;
+  routesConfig.map((route) => {
+    if (route.path === targetPath) {
+      ans = route;
+    }
+  });
+  return ans;
+};
+~~~
+
+`getRoutes`方法支持`children`的渲染核心思想就是抽取生成`<Route>`的逻辑`getRouteStructure`，对于有`children`数组的配置项就递归调用`getRouteStructure(children)`并放在`<Route><Route/>`中即可，即`<Route>getRouteStructure(children)<Route/>`。
+
+至于`About`组件的子组件`Children`，随便一定义即可，`@/containers/About/Children/index`：
+
+~~~jsx
+import React from "react";
+
+const AboutChildren = () => {
+  return <div>This is AboutChildren</div>;
+};
+
+export default AboutChildren;
+~~~
+
+并在`About`组件中使用`Children`组件：
+
+~~~jsx
+import React from "react";
+import Header from "../../components/Header";
++ import { Outlet } from "react-router-dom";
+
+const About = () => {
+  return (
+    <div>
+      <Header />
+      This is About page
++     <Outlet />
+    </div>
+  );
+};
+
+export default About;
+~~~
+
+经过上面的配置，客户端访问`127.0.0.1:3000/about`已经可以正确渲染出嵌套路由了，而且逻辑交互都正常。
+
+
+
+#### bug
+
+稍作改变，如果访问`127.0.0.1:3000/about/children`，客户端与服务端都会报错，都是因为一件事情，但服务端的报错更容易理解错误所在：
+
+~~~
+No routes matched location "/about/index.js" 
+~~~
+
+说明了客户端向服务端发送了一个请求，请求的`url`是`/about/index.js`，这就是因为`@/server/utils`的`render`函数中那个`<script src="./index.js">`所发出的请求，因为我们请求的是`127.0.0.1:3000/about/children`，基于此，`./index.js`就代表了`/about/index.js`，因为找不到这个js资源，所以就出错了。如果想让我们的应用程序支持请求`127.0.0.1:3000/about/children`而不报错，也非常简单，只需要把将`<script src="./index.js">`改成`<script src="../index.js">`即可。
+
+这里暂时一个想到的解决方案就是写一个方法，用来甄别客户端浏览器请求的路由层级，如果顶层路由，如`127.0.0.1:3000/`或者`127.0.0.1:3000/about`，对应的`<script>`的`src`为`"./index.js"`；如果是嵌套路由，那么如上描述的，修改`src`为`../index.js`或者`../../index.js`即可。

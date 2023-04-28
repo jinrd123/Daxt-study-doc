@@ -713,3 +713,166 @@ export default connect(mapStateToProps, mapDispatchToProps)(Home);
 可以注意到`@/containers/Home/store/reducer.js`中初始化仓库数据时`defaultState`给`data`值设置了一个`"home data"`作为初始值，然后打开浏览器的源代码，`"home data"`是成功出现在源码中的，也就是成功进行了ssr。
 
 我们的思路就非常明确了：**在服务端代码部分，给`renderToString`传参之前，把异步数据成功存入`store`中即可，这样`renderToString`就能顺利渲染出`store`中的数据并返回给客户端。**
+
+
+
+### 具体实现——跑通数据流
+
+曾经的路由配置文件`@/Routes.js`是直接对外暴露了`<Routes><Route /></Routes>`的路由结构，现在我们把这个结构拆分成一个路由配置对象`routeConfig`和`getRoutes`方法，`getRoutes`方法接收`routeConfig`对象即可生成曾经的路由组件结构，部分代码对比如下：
+
+~~~jsx
+// 曾经的Routes.js
+const Routes = () => {
+  return (
+    <RouterRoutes>
+      <Route path="/" element={<Home />} />
+      <Route path="/about" element={<About />} />
+    </RouterRoutes>
+  );
+};
+export default Routes;
+
+// 现在的Routes.js
+export const routesConfig = [
+  {
+    path: "/",
+    element: <Home />,
+    loadData: Home.loadData,
+  },
+  {
+    path: "/about",
+    element: <About />,
+  },
+];
+
+export const getRoutes = (routesConfig) => { // TODO: 增加嵌套路由子<Route />的生成
+  return (
+    <RouterRoutes>
+      {routesConfig.map((route, index) => (
+        <Route {...route} key={index} />
+      ))}
+    </RouterRoutes>
+  );
+};
+~~~
+
+之所以这样拆分，是为了以配置对象的形式，记录更多的路由信息，也就是某些路由组件的`loadData`方法，即它获取异步数据需要调用的方法，对应的就可以在`@/server/utils`的`render`方法中，`renderToString`调用之前调用要渲染的路由的`loadData`方法，从而将数据存储在`store`中，就做到了异步数据的ssr。
+
+~~~jsx
+// @/server/utils
+export const render = (req) => {
+  const store = getStore(); // 先提前实例化store
+  fetchAsyncData(routesConfig, req.path, store); // fetchAsyncData方法三个参数的作用：1.routesConfig提供了每个路由组件的loadData方法 2.req.path即用户请求的路由地址，表明了需要进行ssr渲染的路由组件是哪个 3.store即为数据存储的容器
+  const content = renderToString(
+    <Provider store={store}>
+      {/* <StaticRouter />就是通过req.path确定要对哪个路由组件进行ssr渲染，这里我们也要通过req.path对要ssr的组件进行异步数据获取 */}
+      <StaticRouter location={req.path}>{getRoutes(routesConfig)}</StaticRouter>
+    </Provider>
+  );
+  return `
+        <html>
+            <head>
+                <title>hello</title>
+            </head>
+            <body>
+                <div id="root">${content}</div>
+                <script src="./index.js"></script>
+            </body>
+        </html>
+    `;
+};
+~~~
+
+当然还需要给需要获取异步数据的组件实例挂载上一个`loadData`方法，就放在组件函数身上即可（就是一个组件类的静态方法），如`Home`组件：
+
+~~~jsx
+import React, { useEffect } from "react";
+import Header from "../../components/Header";
+import { connect } from "react-redux";
+import { getHomeData } from "./store/actions";
+
+const Home = (props) => {
+  useEffect(() => {
+    const { getHomeData } = props;
+    getHomeData();
+  }, []);
+
+  return (
+    <div>
+      <Header />
+      <br />
+      {props.data}
+    </div>
+  );
+};
+
++ Home.loadData = (store) => {
++   console.log("store派发action来获取组件需要的异步数据");
++ };
+
+const mapStateToProps = (state) => ({
+  data: state.home.data,
+});
+
+const mapDispatchToProps = (dispatch) => ({
+  getHomeData() {
+    dispatch(getHomeData());
+  },
+});
+
+export default connect(mapStateToProps, mapDispatchToProps)(Home);
+~~~
+
+因为我们修改了路由配置的获取方式，当然还需要对客户端代码进行微调：
+
+~~~jsx
+// @/client/index.js
+import React from "react";
+import { hydrateRoot } from "react-dom/client";
+import { BrowserRouter } from "react-router-dom";
++ import { routesConfig, getRoutes } from "../Routes";
+- import Routes from "../Routes";
+import { Provider } from "react-redux";
+import getStore from "../store";
+
+const App = () => {
+  return (
+    <Provider store={getStore()}>
+-     <BrowserRouter>{Routes()}</BrowserRouter>
++     <BrowserRouter>{getRoutes(routesConfig)}</BrowserRouter>
+    </Provider>
+  );
+};
+
+hydrateRoot(document.getElementById("root"), <App />);
+~~~
+
+最后看一下`@/server/utils.js`中对`fetchAsyncData`方法的实现：
+
+~~~jsx
+// TODO: 修改逻辑适配嵌套路由异步数据的获取，将下面的matchedRoute修改为mathedRoutes(当前只获取匹配到的一个顶层路由)
+// 获取路由组件所需的异步数据填充到store中
+// 这里要求组件挂载的loadData函数需要传入store实例
+export const fetchAsyncData = (routesConfig, targetPath, store) => {
+  const matchedRoute = matchRoutes(routesConfig, targetPath);
+  if (matchedRoute.loadData) {
+    matchedRoute.loadData(store);
+  }
+};
+
+// TODO: 增加嵌套路由的匹配支持 & 完善重定向处理...
+// 获取客户端请求路径对应的所有需要获取异步数据的路由配置项
+export const matchRoutes = (routesConfig, targetPath) => {
+  let ans;
+  routesConfig.map((route) => {
+    if (route.path === targetPath) {
+      ans = route;
+    }
+  });
+  return ans;
+};
+~~~
+
+可以说实现是非常粗糙的，`matchRoutes`方法只能匹配到顶层路由，理论上来讲子路由也需要进行匹配并获取异步数据的，再者还有生成`jsx`路由结构的`getRoutes`方法，一层遍历，也是不能生成子路由（嵌套路由）的。这些都是未来需要进行完善的地方。这里为了先跑通异步数据的获取，重点暂时不放在这里。
+
+经过上面的修改，当客户端请求`node`服务时，可以看到`node`服务成功打印出了`"store派发action来获取组件需要的异步数据"`，也就是`Home.loadData`方法正常执行了。现在我们只需要修改`loadData`的逻辑，让`store`正确获取到异步数据即可了。

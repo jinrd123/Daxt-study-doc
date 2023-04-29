@@ -908,7 +908,7 @@ module.exports = {
 
 
 
-### 修改`getRoutes`算法以支持嵌套路由的生成
+### 修改`getRoutes`算法以支持嵌套路由的生成（插曲）
 
 首先修改配置对象`routesConfig`，给`/about`路由增加配置`children`，增加一个重定向路由配置项与一个`/about/children`路由配置，然后修改`getRoutes`方法，旨在遍历`routesConfig`生成`jsx`结构时可以处理`children`以生成嵌套的`<Route />`结构，`@/Routes.js`：
 
@@ -1045,3 +1045,104 @@ No routes matched location "/about/index.js"
 这里暂时一个想到的解决方案就是写一个方法，用来甄别客户端浏览器请求的路由层级，如果顶层路由，如`127.0.0.1:3000/`或者`127.0.0.1:3000/about`，对应的`<script>`的`src`为`"./index.js"`；如果是嵌套路由，那么如上描述的，修改`src`为`../index.js`或者`../../index.js`即可。
 
 同时由于我们生成的`<Route>`的嵌套结构中使用了`<Navigate />`组件（`<Route element={<Navigate />}`），服务端会给出一个警告：`<Navigate> must not be used on the initial render in a <StaticRouter>. This is a no-op, but you should modify your code so the <Navigate> is only ever rendered in response to some user interaction or state change.`，关于这个问题，似乎在`react-router`升级至6版本时就有人提出了相关[issue](https://github.com/remix-run/react-router/issues/7267)，当时好像根本不支持`ssr`，现在除了有这个警告之外，客户端功能完全正常，所以我认为没有必要在意。
+
+
+
+### 具体实现——实现服务端异步数据ssr
+
+接上面的“跑通数据流”的思路，在“跑通数据流”中，我们的`Home.loadData`函数中就是执行了一个同步的`console.log`逻辑，现在的问题关键在于`Home.loadData`中获取数据的逻辑需要给外界一个反馈，也就是说让外面知道异步数据的获取完成的如何了，这里我们对`Home.loadData`与`getHomeData(发送axios的action)`进行如下修改：
+
+~~~js
+// src/containers/Home/store/action.js
+export const getHomeData = () => {
+  return (dispatch) => {
+-   axios.get("http://127.0.0.1:80").then((res) => {
++   return axios.get("http://127.0.0.1:80").then((res) => { 
+      const homeData = res.data;
+      dispatch(changeHomeData(homeData));
+    });
+  };
+};
+  
+// src/containers/Home/index.js
+Home.loadData = (store) => {
+- console.log("store派发action来获取组件需要的异步数据");
++ return store.dispatch(getHomeData());
+};
+~~~
+
+我们知道`createStore(reducer, applyMiddleware(thunk))`使用了`thunk`中间件创建的`store`可以`dispatch`一个函数，而不局限于一个`action`对象，`store`将会执行这个函数，并且这个函数可以接收到`dispatch`作为第一个参数，如上的`getHomeData`方法，说白了就是一个工厂函数，其实就完全类似于原生`redux`的`action`对象的工厂函数。
+
+回归正题，也就是说`Home.loadData`中`dispatch(getHomeData())`的结果就是执行`getHomeData()`的返回值，也就是`getHomeData`内部`return`的函数，我们给这个函数一个返回值，即`return axios.get`，即一个`promise`，这样就相当于`Home.loadData`中的`store.dispatch(getHomeData())`就返回了`axios.get`，自然我们就可以把这个`promise`继续返回出去，这样就相当于给外界一个异步请求的反馈了。
+
+然后就是`@/server`中的代码进行修改，旨在所有获取异步数据的`loadData`执行完毕后再`res.send`（为了保证`render`函数的返回渲染字符串的功能纯净性，把一些逻辑的位置进行了调整）
+
+~~~jsx
+// src/server/utils.js
+
+import React from "react"; // 提供jsx语法支持
+import { renderToString } from "react-dom/server";
+import { StaticRouter } from "react-router-dom/server";
+import { routesConfig, getRoutes } from "../Routes";
+import { Provider } from "react-redux";
+
+export const render = (req, store) => {
+  const content = renderToString(
+    <Provider store={store}>
+      <StaticRouter location={req.path}>{getRoutes(routesConfig)}</StaticRouter>
+    </Provider>
+  );
+  return `
+        <html>
+            <head>
+                <title>hello</title>
+            </head>
+            <body>
+                <div id="root">${content}</div>
+                <script src="./index.js"></script>
+            </body>
+        </html>
+    `;
+};
+
+
+// src/server/index.js
+
+import express from "express";
+import { render } from "./utils";
+import getStore from "../store";
+import { routesConfig } from "../Routes";
+import { matchRoutes } from "react-router-dom";
+
+const app = express();
+app.use(express.static("public"));
+
+app.get("*", (req, res) => {
+  const store = getStore();
+  const matchedRoutes = matchRoutes(routesConfig, req.path); // 使用"react-router-dom"提供的api
+  const promises = []; // 创建一个promise数组，存放所有axios请求返回的promise
+  matchedRoutes.forEach((item) => {
+    if (item.route.loadData) {
+      promises.push(item.route.loadData(store));
+    }
+  });
+ 	// 当所有axios请求成功，也就是所有promise都变成成功状态时进行res.send
+  Promise.all(promises).then(() => {
+    res.send(render(req, store));
+  });
+});
+
+app.listen(3000, () => {
+  console.log("server run successfully");
+});
+~~~
+
+因为我们这里采用了`react-router-dom`提供的`matchRoutes`进行路由的匹配，同时采用`Promise.all`判断所有`axios`返回值的方式进行异步数据获取状态的判断，自然`src/Routes.js`中的`fetchAsyncData`方法也可以随之删除了。
+
+经过上面的修改，我们客户端访问时，查看源代码发现异步数据已经被成功的ssr了，但是控制台报错，其中一个警告：
+
+~~~
+rning: Text content did not match. Server: "服务器返回的get数据" Client: "home data"
+~~~
+
+也就是说，现在服务端`renderToString`方法渲染静态字符串时用的`store`是存放了异步数据的`store`，但是客户端`hydrateRoot`生成js时用的是初始化的`store`，警告中的`"home data"`就是`store`初始化的值，所以造成了客户端与服务端不一致，出现报错。

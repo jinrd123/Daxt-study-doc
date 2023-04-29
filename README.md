@@ -51,6 +51,14 @@ const content = renderToString(<Home />); // 得到Home组件对应的字符串
 
 
 
+## 数据注水 & 脱水
+
+服务端把渲染用的（异步）数据存放到`window.context`中的过程，即为注水，把数据注入到`window.context`中？
+
+客户端渲染时（执行js脚本时），直接从`window.context`中取出数据来使用的过程称为脱水。
+
+
+
 # webpack配置文件
 
 
@@ -1146,3 +1154,66 @@ rning: Text content did not match. Server: "服务器返回的get数据" Client:
 ~~~
 
 也就是说，现在服务端`renderToString`方法渲染静态字符串时用的`store`是存放了异步数据的`store`，但是客户端`hydrateRoot`生成js时用的是初始化的`store`，警告中的`"home data"`就是`store`初始化的值，所以造成了客户端与服务端不一致，出现报错。
+
+
+
+### 具体实现——通过数据注水 & 脱水实现客户端数据与服务端的一致性
+
+思路就是在服务端的`store`获取了数据之后，将`store.getState()`存放在`window.context`中以供客户端创建`store`时使用，作为客户端`store`的初始化值。这样就保证了客户端的`store`与服务端`store`数据的一致性。
+
+~~~jsx
+// src/server/utils.js
+import React from "react"; // 提供jsx语法支持
+import { renderToString } from "react-dom/server";
+import { StaticRouter } from "react-router-dom/server";
+import { routesConfig, getRoutes } from "../Routes";
+import { Provider } from "react-redux";
+
+export const render = (req, store) => {
+  const content = renderToString(
+    <Provider store={store}>
+      <StaticRouter location={req.path}>{getRoutes(routesConfig)}</StaticRouter>
+    </Provider>
+  );
+  // 在<script src="./index.js"></script>的上方插入新的<script>，说白了这个新的<script>就是服务端对客户端一种数据的传递，这个数据就是给下面的<script src="./index.js"></script>使用的。
+  return `
+        <html>
+            <head>
+                <title>hello</title>
+            </head>
+            <body>
+                <div id="root">${content}</div>
++               <script>
++                 window.context = {
++                   state: ${JSON.stringify(store.getState())}
++                 }
++               </script>
+                <script src="./index.js"></script>
+            </body>
+        </html>
+    `;
+};
+
+// src/store/index.js
+import { createStore, applyMiddleware, combineReducers } from "redux";
+import thunk from "redux-thunk";
+import { reducer as homeReducer } from "../containers/Home/store";
+
+const reducer = combineReducers({
+  home: homeReducer,
+});
+
+export const getStore = () => {
+  return createStore(reducer, applyMiddleware(thunk));
+};
+ 
+// 单独定义一个创建客户端store的方法getClientStore，与getStore的区别就是从window对象中读取一个默认值（这个值就是服务端获取了异步数据后通过修改render函数中返回的字符串的形式传递给客户端的）
++ export const getClientStore = () => {
++  const defaultState = window.context.state;
++  return createStore(reducer, defaultState, applyMiddleware(thunk));
++ };
+  
+- export default getStore;
+~~~
+
+当然还需要对应的稍微改一下服务端与客户端代码创建`store`的方法引入方式以及调用方式即可。

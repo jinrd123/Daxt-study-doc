@@ -1286,3 +1286,70 @@ app.listen(3000, () => {
 配置好了代理后，先来验证下客户端是否能正常通过node服务获取到远程服务器的数据，修改`axios.get`的地址为`/api`，但切记如上，把`@/server/index.js`中服务端获取异步数据的逻辑注释上，因为`axios.get`使用相对路径时在浏览器和服务器上的行为是不一致的，具体来说就是`/api`在浏览器端运行，就会请求浏览器地址与相对路径的拼接的结果，但是服务器好想不是这样的，可能（因为我没验证）是会请求服务运行的目录与相对路径拼接的地址，也就是说不是请求我们的node服务了，而是去访问node服务之外的其他资源了。所以我们先把服务端获取异步数据的代码注释上。
 
 浏览器请求我们的服务端渲染项目，网络抓包发现有一个`/api`请求，请求的地址是node服务，但是返回了远程服务器的数据。即node服务代理初步配置成功。
+
+
+
+## 使用不同的axios实例来解决客户端与服务端请求地址的区分问题
+
+分别在`@/client/`与`@/server/`文件夹下创建`request.js`，用来创建客户端与服务端不同的`axios`实例，这里我们只为了处理请求地址区分的问题，两实例之间只配置了`baseURL`，对于客户端实例，要向node服务发请求，所以我们使用相对路径，`baseURL`只加一个`/api`用来触发node服务的代理转发，而且经过代理中间件，`/api`字段也会被清除，也就是说使用此实例发请求时，只需要写远程服务器接口的路由即可；对于服务端的实例，直接拼接上远程服务的地址即可。这样客户端与服务端两者发送请求的url就实现了统一，都直接请求远程服务的接口url，只需要使用不同axios实例即可。
+
+~~~js
+// src/client/request.js
+import axios from "axios";
+
+const instance = axios.create({
+  baseURL: "/api", // api触发本node服务的代理转发
+});
+
+export default instance;
+
+// src/server/request.js
+import axios from "axios";
+
+const instance = axios.create({
+  baseURL: "http://127.0.0.1:80", // 服务端请求baseURL设置为远程服务器即可
+});
+
+export default instance;
+~~~
+
+对于`action.js`中的异步方法，只需要判断使用哪一个axios实例即可
+
+~~~js
+import { CHANGE_HOME_LIST } from "./constants";
++ import clientAxios from "../../../client/request";
++ import serverAxios from "../../../server/request";
+- import axios from "axios";
+
+export const changeHomeData = (data) => ({
+  type: CHANGE_HOME_LIST,
+  data,
+});
+
+export const getHomeData = (server) => {
++ const request = server ? serverAxios : clientAxios;
+  return (dispatch) => {
+-   return axios.get("/").then((res) => {
++   return request.get("/").then((res) => {
+      const homeData = res.data;
+      dispatch(changeHomeData(homeData));
+    });
+  };
+};
+~~~
+
+但是在`Home`组件中，注意`Home.loadData`中调用`getHomeData`时需要传入`true`，给客户端用的`getHomeData`(映射到`props`中)调用时传入`false`。
+
+~~~js
+Home.loadData = (store) => {
+  return store.dispatch(getHomeData(true));
+};
+
+const mapDispatchToProps = (dispatch) => ({
+  getHomeData() {
+    dispatch(getHomeData(false));
+  },
+});
+~~~
+
+这样我们可以解开上面注释掉的服务端获取异步数据的逻辑，项目又正常进行渲染了！

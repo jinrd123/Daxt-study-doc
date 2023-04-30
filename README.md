@@ -1217,3 +1217,72 @@ export const getStore = () => {
 ~~~
 
 当然还需要对应的稍微改一下服务端与客户端代码创建`store`的方法引入方式以及调用方式即可。
+
+
+
+# 实现node服务的请求代理功能
+
+观察当下的`Home`组件，浏览器端会执行`useEffect`中的逻辑，即发送网络请求；服务端中会执行`Home.loadData`发送网络请求，两者本质上都是触发`store`的`action`，即走到如下的`axios.get`中：
+
+~~~js
+// src/containers/Home/store/actions.js
+export const getHomeData = () => {
+  return (dispatch) => {
+    return axios.get("http://127.0.0.1:80").then((res) => {
+      const homeData = res.data;
+      dispatch(changeHomeData(homeData));
+    });
+  };
+};
+~~~
+
+但这就会导致浏览器端的代码逻辑执行（打包出来的那个js文件）也会向远程服务器(`http://127.0.0.1:80`)发送请求，现在的改造目标就是让node服务对远程服务器进行代理，让浏览器端向node服务请求异步数据（node服务请求远程服务并返回给浏览器），而非直接请求远程服务器。
+
+使用一个三方依赖完成node服务对远程服务的代理：[express-http-proxy](https://github.com/villadora/express-http-proxy)
+
+修改`@/server/index.js`
+
+~~~js
+import express from "express";
+import { render } from "./utils";
+import { getStore } from "../store";
+import { routesConfig } from "../Routes";
+import { matchRoutes } from "react-router-dom";
+import proxy from "express-http-proxy";
+
+const app = express();
+app.use(express.static("public"));
+
+// 对以"/api"开头的请求使用proxy中间件
+app.use(
+  "/api",
+  proxy("http://127.0.0.1", { // 将请求转发至"http://127.0.0.1"，即"http://127.0.0.1:80"
+    proxyReqPathResolver: function (req) { // 函数返回值即为目标服务器上想请求的接口，我们需要借助req进行构造
+      console.log(req.url); // req.url即去除/api之后的请求字段，比如浏览器请求我们这个node服务，url为http://xxx:xxx/api，那么req.url就是"/"，最终相当于请求了proxy代理的目标服务器上的"/"接口
+      return req.url;
+    },
+  })
+);
+
+app.get("*", (req, res) => {
+  const store = getStore();
+  // const matchedRoutes = matchRoutes(routesConfig, req.path);
+  // const promises = [];
+  // matchedRoutes.forEach((item) => {
+  //   if (item.route.loadData) {
+  //     promises.push(item.route.loadData(store));
+  //   }
+  // });
+  // Promise.all(promises).then(() => {
+  	res.send(render(req, store));
+  // });
+});
+
+app.listen(3000, () => {
+  console.log("server run successfully");
+});
+~~~
+
+配置好了代理后，先来验证下客户端是否能正常通过node服务获取到远程服务器的数据，修改`axios.get`的地址为`/api`，但切记如上，把`@/server/index.js`中服务端获取异步数据的逻辑注释上，因为`axios.get`使用相对路径时在浏览器和服务器上的行为是不一致的，具体来说就是`/api`在浏览器端运行，就会请求浏览器地址与相对路径的拼接的结果，但是服务器好想不是这样的，可能（因为我没验证）是会请求服务运行的目录与相对路径拼接的地址，也就是说不是请求我们的node服务了，而是去访问node服务之外的其他资源了。所以我们先把服务端获取异步数据的代码注释上。
+
+浏览器请求我们的服务端渲染项目，网络抓包发现有一个`/api`请求，请求的地址是node服务，但是返回了远程服务器的数据。即node服务代理初步配置成功。

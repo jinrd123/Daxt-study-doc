@@ -1353,3 +1353,51 @@ const mapDispatchToProps = (dispatch) => ({
 ~~~
 
 这样我们可以解开上面注释掉的服务端获取异步数据的逻辑，项目又正常进行渲染了！
+
+
+
+### 代码优化
+
+这样组件内派发异步的action都需要传递一个布尔值`server`来判断使用哪一个`axios`实例，为了增加代码的可维护性，`server`势必需要去除。
+
+思路：因为我们客户端和服务端通过axios获取异步数据存放的`store`是不同的，所以我们可以从`store`的角度切入，使用`thunk`中间件提供的`withExtraArgument`方法，传给这个方法的参数，会被派发的执行函数接收，我们把`serverAxios`传递给服务端`store`，`clientAxios`传递给客户端`store`。
+
+~~~js
+// src/store/index.js
+import { createStore, applyMiddleware, combineReducers } from "redux";
+import thunk from "redux-thunk";
+import { reducer as homeReducer } from "../containers/Home/store";
++ import clientAxios from "../client/request";
++ import serverAxios from "../server/request";
+
+const reducer = combineReducers({
+  home: homeReducer,
+});
+
+export const getStore = () => {
+  return createStore(
+    reducer,
++   applyMiddleware(thunk.withExtraArgument(serverAxios))
+  );
+};
+
+export const getClientStore = () => {
+  const defaultState = window.context.state;
+  return createStore(
+    reducer,
+    defaultState,
++    applyMiddleware(thunk.withExtraArgument(clientAxios))
+  );
+};
+
+// src/containers/Home/store/actions.js
+export const getHomeData = () => {
+  return (dispatch, getState, axiosInstance) => { // 第三个参数即可接收到withExtraArgument方法传递的参数
+    return axiosInstance.get("/").then((res) => {
+      const homeData = res.data;
+      dispatch(changeHomeData(homeData));
+    });
+  };
+};
+~~~
+

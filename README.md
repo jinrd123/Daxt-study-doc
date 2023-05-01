@@ -1401,3 +1401,148 @@ export const getHomeData = () => {
 };
 ~~~
 
+
+
+# 实现css支持
+
+## 初步引入css
+
+`webpack.client.js`：
+
+~~~js
+const path = require("path");
+const { merge } = require("webpack-merge");
+const config = require("./webpack.base.js");
+
+const clientConfig = {
+  mode: "development",
+  entry: "./src/client/index.js",
+  output: {
+    filename: "index.js",
+    path: path.resolve(__dirname, "public"),
+  },
++ module: {
++   rules: [
++     {
++       test: /\.css$/i,
++       use: [
++         "style-loader",
++         {
++           loader: "css-loader",
++           options: {
++             importLoaders: 1,
++             modules: {
++               localIdentName: "[name]_[local]_[hash:base64:5]",
++             },
++             // localIdentName: "[name]_[local]_[hash:base64:5]",
++           },
++         },
++       ],
++     },
++   ],
++ },
+};
+
+module.exports = merge(config, clientConfig);
+~~~
+
+对于客户端的打包逻辑，比较好理解，都是老知识了，先用`css-loader`将`.css`文件的内容处理成js代码，然后是`style-loader`处理，其作用有两点：
+
+1. 发现标签使用了css样式（类名），就给标签添加这么一个css属性。
+2. 给最终打包生成的js产物（`bundle.js`）增加一段逻辑，这段逻辑的作用是：把`css-loader`处理得到的js形式的css样式字符串放入`<style />`中然后插入到`<head />`中。
+
+服务端也这么配置的话，会有报错，提示`window`对象相关，说明`style-loader`里的逻辑是用到了`window`上的一些属性或者方法的。
+
+`webpack.server.js`：
+
+~~~js
+const path = require("path");
+const nodeExternals = require("webpack-node-externals");
+const { merge } = require("webpack-merge");
+const config = require("./webpack.base.js");
+
+const serverConfig = {
+  // target: "node", // 打包后输出再node环境下运行的代码
+  externalsPresets: { node: true },
+  mode: "development",
+  entry: "./src/server/index.js",
+  output: {
+    filename: "bundle.js",
+    path: path.resolve(__dirname, "build"),
+  },
+  externals: [nodeExternals()], // 以忽略节点\模块文件夹中的所有模块
++ module: {
++   rules: [
++     {
++       test: /\.css$/i,
++       use: [
++         "isomorphic-style-loader",
++         {
++           loader: "css-loader",
++           options: {
++             importLoaders: 1,
++             modules: {
++               localIdentName: "[name]_[local]_[hash:base64:5]",
++             },
++             esModule: false,
++             // localIdentName: "[name]_[local]_[hash:base64:5]",
++           },
++         },
++       ],
++     },
++   ],
++ },
+};
+
+module.exports = merge(config, serverConfig);
+~~~
+
+服务端对于css打包配置唯一的不同就是将`style-loader`替换成了`isomorphic(同构)-style-loader`，其作用有一点，就是`style-loader`的第一点：发现标签使用了css样式，就给标签添加上相应的类名等css属性（肯定是避开了`style-loader`中使用`window`的一些操作），`isomorphic[aɪsəˈmɔːfɪk]`本身就是同构的意思，所以从字面意思上就更好理解它的作用了，就是让在服务器打包的项目代码可以脱离浏览器环境然后做到渲染出来的标签的css属性和浏览器端`style-loader`处理出来的一样。
+
+~~~jsx
+// Home组件
++import styles from "./style.css";
+
+const Home = (props) => {
+  useEffect(() => {
+    const { getHomeData } = props;
+    getHomeData();
+  }, []);
+
+  return (
++   <div className={styles.test}>
+      <Header />
+      <br />
+      {props.data}
+    </div>
+  );
+};
+
+//Home/style.css
+.test {
+  background: skyblue;
+  color: brown;
+}
+~~~
+
+经过上面的配置，我们完成了css的初步引入，但之所以说是初步引入，是因为现在我们的css想过其实是通过浏览器执行js文件从而动态添加上去的样式（`<head />`里的`<style />`标签），所以这些样式并没有做到服务端渲染，这回造成一个问题：**样式抖动——即在js文件执行完毕后样式才生效，所以存在一开始没有样式，然后突然出现样式的问题。**
+
+
+
+### 使用isomorphic-style-loader的坑
+
+服务端在配置好`isomorphic-style-loader`以及`css-loader`之后发现服务端产生的字符串并没有把标签的类名正确的渲染上，也就是`isomorphic-style-loader`并没有出现预期的效果，[解决方案](https://stackoverflow.com/questions/63458657/isomorphic-style-loader-doesnt-work-as-it-supposed-to)（给`css-loader`配置`esModule: false,`）：
+
+I faced the same problem. Problem is related with css-loader. [By default, css-loader generates JS modules that use the ES modules syntax](https://webpack.js.org/loaders/css-loader/#esmodule). isomorphic-style-loader needs a CommonJS modules syntax.
+
+Try this:
+
+```js
+{
+  loader: 'css-loader',
+  options: {
+    importLoaders: 1,
+    esModule: false,
+  },
+}
+```

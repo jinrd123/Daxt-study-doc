@@ -1546,3 +1546,144 @@ Try this:
   },
 }
 ```
+
+
+
+## 实现css的服务端渲染
+
+纯关于isomorphic-style-loader的配置与使用问题，直接上代码：
+
+`webpack.client.js`（同样需要用`isomorphic-style-loader`替换`style-loader`）:
+
+~~~js
+const path = require("path");
+const { merge } = require("webpack-merge");
+const config = require("./webpack.base.js");
+
+const clientConfig = {
+  mode: "development",
+  entry: "./src/client/index.js",
+  output: {
+    filename: "index.js",
+    path: path.resolve(__dirname, "public"),
+  },
+  module: {
+    rules: [
+      {
+        test: /\.css$/i,
+        use: [
++         "isomorphic-style-loader",
+          {
+            loader: "css-loader",
+            options: {
+              importLoaders: 1,
+              modules: {
+                localIdentName: "[name]_[local]_[hash:base64:5]",
+              },
++             esModule: false,
+              // localIdentName: "[name]_[local]_[hash:base64:5]",
+            },
+          },
+        ],
+      },
+    ],
+  },
+};
+
+module.exports = merge(config, clientConfig);
+~~~
+
+然后客户端`hydrateRoot`和服务端`renderToString`之前都需要用`isomorphic-style-loader/StyleContext`提供的`context`对象给渲染目标提供一个`insertCss`方法：
+
+~~~js
+// src/client/index.js
+import React from "react";
+import { hydrateRoot } from "react-dom/client";
+import { BrowserRouter } from "react-router-dom";
+import { routesConfig, getRoutes } from "../Routes";
+import { Provider } from "react-redux";
+import { getClientStore } from "../store";
++ import StyleContext from "isomorphic-style-loader/StyleContext";
+
+const App = () => {
+  return (
+    <Provider store={getClientStore()}>
+      <BrowserRouter>{getRoutes(routesConfig)}</BrowserRouter>
+    </Provider>
+  );
+};
++ const insertCss = (...styles) => {
++  const removeCss = styles.map((style) => style._insertCss());
++  return () => removeCss.forEach((dispose) => dispose());
++ };
+
+hydrateRoot(
+  document.getElementById("root"),
++ <StyleContext.Provider value={{ insertCss }}>
+    <App />
++ </StyleContext.Provider>
+);
+
+// src/server/utils.js
+import React from "react"; // 提供jsx语法支持
+import { renderToString } from "react-dom/server";
+import { StaticRouter } from "react-router-dom/server";
+import { routesConfig, getRoutes } from "../Routes";
+import { Provider } from "react-redux";
++ import StyleContext from "isomorphic-style-loader/StyleContext";
+
+export const render = (req, store) => {
++ const css = new Set(); // CSS for all rendered React components
++ const insertCss = (...styles) =>
++   styles.forEach((style) => css.add(style._getCss()));
+  const content = renderToString(
++   <StyleContext.Provider value={{ insertCss }}>
+      <Provider store={store}>
+        <StaticRouter location={req.path} context={{}}>
+          {getRoutes(routesConfig)}
+        </StaticRouter>
+      </Provider>
++   </StyleContext.Provider>
+  );
+  return `
+        <html>
+            <head>
+                <title>hello</title>
++               <style>${[...css].join("")}</style>
+            </head>
+            <body>
+                <div id="root">${content}</div>
+                <script>
+                  window.context = {
+                    state: ${JSON.stringify(store.getState())}
+                  }
+                </script>
+                <script src="./index.js"></script>
+            </body>
+        </html>
+    `;
+};
+~~~
+
+对于使用了cssModule添加css样式的组件，使用`useStyle(styles)`hook即可，（`styles(css文件的导入变量)`），如`Home`组件：
+
+~~~jsx
++ import useStyles from "isomorphic-style-loader/useStyles";
+const Home = (props) => {
++ useStyles(styles);
+  useEffect(() => {
+    const { getHomeData } = props;
+    getHomeData();
+  }, []);
+
+  return (
++   <div className={styles.test}>
+      <Header />
+      <br />
+      {props.data}
+    </div>
+  );
+};
+~~~
+
+经过如上配置，已经完成了css的ssr，页面不会因为js文件的加载滞后而出现样式抖动了。
